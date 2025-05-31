@@ -1,6 +1,3 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
 name: Build and deploy PHP app to Azure Web App - proyectofinalcomputo
 
 on:
@@ -13,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read #This is required for actions/checkout
+      contents: read # This is required for actions/checkout
 
     steps:
       - uses: actions/checkout@v4
@@ -49,8 +46,8 @@ jobs:
       name: 'Production'
       url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
     permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
+      id-token: write  # This is required for requesting the JWT
+      contents: read   # This is required for actions/checkout
 
     steps:
       - name: Download artifact from build job
@@ -60,10 +57,11 @@ jobs:
 
       - name: Unzip artifact for deployment
         run: unzip release.zip
+
       # ——————————————————————————————
-      # Paso CRUCIAL: si existiera index.html u hostingstart.html,
-      # los borramos para que Nginx use index.php
-      - name: Eliminar index.html/hostingstart.html antes del deploy
+      # 1) Eliminar archivos locales index.html / hostingstart.html (opcional)
+      #    Esto evita que el ZIP que subiste contenga esos archivos en la raíz.
+      - name: Eliminar index.html/hostingstart.html localmente
         run: |
           if [ -f index.html ]; then
             rm index.html
@@ -71,7 +69,9 @@ jobs:
           if [ -f hostingstart.html ]; then
             rm hostingstart.html
           fi
-          
+
+      # ——————————————————————————————
+      # 2) LOGIN A AZURE (Service Principal) — sin cambios
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -79,6 +79,41 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_421B31D9C18346E4A2B67A71F5292D58 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_CC019733DA55485382505E61E2DC5915 }}
 
+      # ——————————————————————————————
+      # 3) Obtener credenciales de publicación (Basic Auth) para Kudu API — NUEVO
+      #    Esto nos da "publishingUserName" y "publishingPassword" codificados en Base64.
+      - name: Get Kudu publishing credentials (Basic Auth)     # <<< NUEVO
+        id: kudu_token                                        # <<< NUEVO
+        run: |                                                 # <<< NUEVO
+          # Obtenemos usuario y contraseña de publicación
+          creds=$(az webapp deployment list-publishing-credentials \
+                    --name proyectofinalcomputo \
+                    --resource-group TuResourceGroup \
+                    --query "[publishingUserName,publishingPassword]" \
+                    --output tsv)                              # <<< NUEVO
+          user=$(echo "$creds" | awk '{print $1}')             # <<< NUEVO
+          pass=$(echo "$creds" | awk '{print $2}')             # <<< NUEVO
+          basic=$(printf "%s:%s" "$user" "$pass" | base64)      # <<< NUEVO
+          echo "::set-output name=BASIC_AUTH::$basic"           # <<< NUEVO
+
+      # ——————————————————————————————
+      # 4) Eliminar index.html/hostingstart.html en remoto usando Kudu API — NUEVO
+      - name: Remove index.html/hostingstart.html via Kudu API  # <<< NUEVO
+        run: |                                                 # <<< NUEVO
+          kudu_basic=${{ steps.kudu_token.outputs.BASIC_AUTH }} # <<< NUEVO
+          # Borramos index.html remoto (no falla si no existe)
+          curl -X DELETE \
+               -H "Authorization: Basic $kudu_basic" \
+               "https://proyectofinalcomputo.scm.azurewebsites.net/api/vfs/site/wwwroot/index.html" || true
+          # Borramos hostingstart.html remoto (no falla si no existe)
+          curl -X DELETE \
+               -H "Authorization: Basic $kudu_basic" \
+               "https://proyectofinalcomputo.scm.azurewebsites.net/api/vfs/site/wwwroot/hostingstart.html" || true
+        env:                                                   # <<< NUEVO
+          AZURE_WEBAPP_NAME: proyectofinalcomputo               # <<< NUEVO
+
+      # ——————————————————————————————
+      # 5) Deploy del contenido sin index.html (ni hostingstart.html) — sin cambios
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
@@ -86,4 +121,3 @@ jobs:
           app-name: 'proyectofinalcomputo'
           slot-name: 'Production'
           package: .
-          
