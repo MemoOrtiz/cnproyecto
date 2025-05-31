@@ -60,7 +60,18 @@ jobs:
 
       - name: Unzip artifact for deployment
         run: unzip release.zip
-      
+      # ——————————————————————————————
+      # Paso CRUCIAL: si existiera index.html u hostingstart.html,
+      # los borramos para que Nginx use index.php
+      - name: Eliminar index.html/hostingstart.html antes del deploy
+        run: |
+          if [ -f index.html ]; then
+            rm index.html
+          fi
+          if [ -f hostingstart.html ]; then
+            rm hostingstart.html
+          fi
+          
       - name: Login to Azure
         uses: azure/login@v2
         with:
